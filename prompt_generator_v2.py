@@ -1,10 +1,16 @@
-import os, json, random, re, requests
+import json
+import os
+import random
+import re
+
+import requests
 
 # 尝试导入 ComfyUI 内置路径管理与 PyTorch
 try:
     import folder_paths
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
+
     HAS_TRANSFORMERS = True
 except ImportError:
     HAS_TRANSFORMERS = False
@@ -15,13 +21,15 @@ config_path = os.path.join(current_dir, "config.json")
 if not os.path.exists(config_path):
     config_path = os.path.join(current_dir, "config_2.json")
 
+
 def load_config():
     try:
-        with open(config_path, 'r', encoding='utf-8') as f:
+        with open(config_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as e:
         print(f"[PromptGen] 读取配置文件失败: {e}")
         return {}
+
 
 CONFIG = load_config()
 
@@ -31,14 +39,18 @@ CHAR_LIBRARY_DIR = os.path.join(current_dir, "character_library")
 os.makedirs(REF_LIBRARY_DIR, exist_ok=True)
 os.makedirs(CHAR_LIBRARY_DIR, exist_ok=True)
 
+
 def get_files_from_dir(target_dir, default_filename, default_content):
-    files = [f for f in os.listdir(target_dir) if f.endswith(".txt") or f.endswith(".json")]
+    files = [
+        f for f in os.listdir(target_dir) if f.endswith(".txt") or f.endswith(".json")
+    ]
     if not files:
         default_path = os.path.join(target_dir, default_filename)
         with open(default_path, "w", encoding="utf-8") as f:
             f.write(default_content)
         files = [default_filename]
     return files
+
 
 def load_file_content(target_dir, filename):
     if filename == "none" or not filename:
@@ -52,10 +64,11 @@ def load_file_content(target_dir, filename):
             print(f"[PromptGen] 读取文件 {filename} 失败: {e}")
     return ""
 
+
 def get_local_text_encoders():
     """扫描 ComfyUI models/text_encoders 文件夹"""
     model_dirs = ["none"]
-    if 'folder_paths' in globals():
+    if "folder_paths" in globals():
         te_path = folder_paths.get_folder_paths("text_encoders")
         for p in te_path:
             if os.path.exists(p):
@@ -65,6 +78,7 @@ def get_local_text_encoders():
                         model_dirs.append(item)
     return model_dirs
 
+
 # --- Danbooru API 真实请求模块 ---
 def fetch_danbooru_tags(theme_query, rating, db_name, db_apikey):
     """带账号鉴权的 Danbooru API 标签抓取函数"""
@@ -72,7 +86,7 @@ def fetch_danbooru_tags(theme_query, rating, db_name, db_apikey):
         return ""
 
     # 清理查询词，提取关键字（Danbooru 搜索空格分隔）
-    clean_query = re.sub(r'[^\w\s]', ' ', theme_query).strip()
+    clean_query = re.sub(r"[^\w\s]", " ", theme_query).strip()
     words = clean_query.split()
     if not words:
         return ""
@@ -84,11 +98,7 @@ def fetch_danbooru_tags(theme_query, rating, db_name, db_apikey):
         tags_param += f" rating:{rating}"
 
     url = "https://danbooru.donmai.us/posts.json"
-    params = {
-        "tags": tags_param,
-        "limit": 3,
-        "random": "true"
-    }
+    params = {"tags": tags_param, "limit": 3, "random": "true"}
 
     # 填入配置中的 API 凭证
     if db_name and db_apikey:
@@ -105,21 +115,30 @@ def fetch_danbooru_tags(theme_query, rating, db_name, db_apikey):
             extracted_tags = set()
             for post in posts:
                 # 抓取角色 Tag 与通用特征 Tag
-                for category in ['tag_string_character', 'tag_string_general', 'tag_string_copyright']:
+                for category in [
+                    "tag_string_character",
+                    "tag_string_general",
+                    "tag_string_copyright",
+                ]:
                     if category in post and post[category]:
                         extracted_tags.update(post[category].split())
-            
+
             if extracted_tags:
                 # 随机挑选 25 个以内不重复 Tag，避免提示词过长
-                sampled = random.sample(list(extracted_tags), min(25, len(extracted_tags)))
-                print(f"[PromptGen] Danbooru 抓取成功，获取 {len(sampled)} 个关联 Tag。")
+                sampled = random.sample(
+                    list(extracted_tags), min(25, len(extracted_tags))
+                )
+                print(
+                    f"[PromptGen] Danbooru 抓取成功，获取 {len(sampled)} 个关联 Tag。"
+                )
                 return ", ".join(sampled)
         else:
             print(f"[PromptGen Warning] Danbooru API 返回状态码: {resp.status_code}")
     except Exception as e:
         print(f"[PromptGen Warning] Danbooru 网络请求失败或超时: {e}")
-    
+
     return ""
+
 
 # ----------------------------------------------------------------
 # 核心节点类
@@ -129,40 +148,67 @@ class UniversalMultiRefPromptGenerator:
         pass
 
     @classmethod
-    def INPUT_TYPES(s):
-        default_ref = "1girl, solo, white hair, glowing eyes, masterpiece, cinematic lighting\n"
+    def INPUT_TYPES(cls):
+        default_ref = (
+            "1girl, solo, white hair, glowing eyes, masterpiece, cinematic lighting\n"
+        )
         default_char = "# 角色名 | Tags | 描述\n初音未来, Miku | 1girl, hatsune miku, long hair, twintails, aqua hair | Hatsune Miku\n"
-        
-        ref_files = get_files_from_dir(REF_LIBRARY_DIR, "anime_general.txt", default_ref)
-        char_files = get_files_from_dir(CHAR_LIBRARY_DIR, "character_db.txt", default_char)
+
+        ref_files = get_files_from_dir(
+            REF_LIBRARY_DIR, "anime_general.txt", default_ref
+        )
+        char_files = get_files_from_dir(
+            CHAR_LIBRARY_DIR, "character_db.txt", default_char
+        )
         local_models = get_local_text_encoders()
 
         return {
             "required": {
-                "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
-                "custom_theme": ("STRING", {
-                    "default": "", 
-                    "multiline": False, 
-                    "placeholder": "主题/角色/故事（如: 少年，少女）"
-                }),
-                "llm_backend": ([
-                    "Online API (DeepSeek/SiliconFlow)", 
-                    "Local API (Ollama / LM Studio)", 
-                    "Direct Local Model (Transformers)"
-                ], {"default": "Online API (DeepSeek/SiliconFlow)"}),
+                "seed": ("INT", {"default": 0, "min": 0, "max": 0xFFFFFFFFFFFFFFFF}),
+                "custom_theme": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": False,
+                        "placeholder": "主题/角色/故事（如: 少年，少女）",
+                    },
+                ),
+                "llm_backend": (
+                    [
+                        "Online API (DeepSeek/SiliconFlow)",
+                        "Local API (Ollama / LM Studio)",
+                        "Direct Local Model (Transformers)",
+                    ],
+                    {"default": "Online API (DeepSeek/SiliconFlow)"},
+                ),
                 "local_model_folder": (local_models, {"default": local_models[0]}),
-                "style_preset": ([
-                    "Auto / Follow Reference File", 
-                    "Japanese Anime / Illustration", 
-                    "Cyberpunk / Sci-Fi", 
-                    "Dark Fantasy / Gothic", 
-                    "Realistic Photo / Cinematic"
-                ], {"default": "Auto / Follow Reference File"}),
-                "reference_file": (ref_files, {"default": ref_files[0] if ref_files else "none"}),
-                "character_library_file": (["none"] + char_files, {"default": char_files[0] if char_files else "none"}),
+                "style_preset": (
+                    [
+                        "Auto / Follow Reference File",
+                        "Japanese Anime / Illustration",
+                        "Cyberpunk / Sci-Fi",
+                        "Dark Fantasy / Gothic",
+                        "Realistic Photo / Cinematic",
+                    ],
+                    {"default": "Auto / Follow Reference File"},
+                ),
+                "reference_file": (
+                    ref_files,
+                    {"default": ref_files[0] if ref_files else "none"},
+                ),
+                "character_library_file": (
+                    ["none"] + char_files,
+                    {"default": char_files[0] if char_files else "none"},
+                ),
                 "use_danbooru": (["disable", "enable"], {"default": "disable"}),
-                "danbooru_rating": (["general", "sensitive", "questionable", "explicit", "all"], {"default": "general"}),
-                "tag_prefix": ("STRING", {"default": "masterpiece, best quality, ", "multiline": False}),
+                "danbooru_rating": (
+                    ["general", "sensitive", "questionable", "explicit", "all"],
+                    {"default": "general"},
+                ),
+                "tag_prefix": (
+                    "STRING",
+                    {"default": "masterpiece, best quality, ", "multiline": False},
+                ),
                 "prose_prefix": ("STRING", {"default": "", "multiline": False}),
             },
         }
@@ -175,7 +221,7 @@ class UniversalMultiRefPromptGenerator:
     def call_transformers_local(self, model_folder_name, system_prompt, user_prompt):
         if not HAS_TRANSFORMERS:
             raise ImportError("未检测到 transformers 或 PyTorch 环境！")
-        
+
         te_paths = folder_paths.get_folder_paths("text_encoders")
         model_path = None
         for p in te_paths:
@@ -189,24 +235,31 @@ class UniversalMultiRefPromptGenerator:
 
         print(f"[PromptGen] 正在加载本地大模型: {model_path} ...")
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        
+
         tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
         model = AutoModelForCausalLM.from_pretrained(
-            model_path, 
-            torch_dtype=torch.float16 if device == "cuda" else torch.float32, 
-            device_map="auto", 
-            trust_remote_code=True
+            model_path,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+            device_map="auto",
+            trust_remote_code=True,
         )
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_prompt},
         ]
-        text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+        text = tokenizer.apply_chat_template(
+            messages, tokenize=False, add_generation_prompt=True
+        )
         model_inputs = tokenizer([text], return_tensors="pt").to(device)
 
-        generated_ids = model.generate(**model_inputs, max_new_tokens=512, temperature=0.7)
-        generated_ids = [output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)]
+        generated_ids = model.generate(
+            **model_inputs, max_new_tokens=512, temperature=0.7
+        )
+        generated_ids = [
+            output_ids[len(input_ids) :]
+            for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+        ]
         response = tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
 
         del model
@@ -216,7 +269,20 @@ class UniversalMultiRefPromptGenerator:
 
         return response
 
-    def generate_prompts(self, seed, custom_theme, llm_backend, local_model_folder, style_preset, reference_file, character_library_file, use_danbooru, danbooru_rating, tag_prefix, prose_prefix):
+    def generate_prompts(
+        self,
+        seed,
+        custom_theme,
+        llm_backend,
+        local_model_folder,
+        style_preset,
+        reference_file,
+        character_library_file,
+        use_danbooru,
+        danbooru_rating,
+        tag_prefix,
+        prose_prefix,
+    ):
         random.seed(seed)
 
         ref_text = load_file_content(REF_LIBRARY_DIR, reference_file)
@@ -227,7 +293,9 @@ class UniversalMultiRefPromptGenerator:
         if use_danbooru == "enable" and custom_theme.strip():
             db_name = CONFIG.get("db_name", "")
             db_apikey = CONFIG.get("db_apikey", "")
-            danbooru_fetched_tags = fetch_danbooru_tags(custom_theme, danbooru_rating, db_name, db_apikey)
+            danbooru_fetched_tags = fetch_danbooru_tags(
+                custom_theme, danbooru_rating, db_name, db_apikey
+            )
 
         # 构建完整的 Context
         system_prompt = f"""You are an elite AI Image Prompt Engineer.
@@ -270,32 +338,47 @@ RULES:
         try:
             # 模式 1：在线 API
             if llm_backend == "Online API (DeepSeek/SiliconFlow)":
-                headers = {"Authorization": f"Bearer {CONFIG.get('llm_apikey', '')}", "Content-Type": "application/json"}
+                headers = {
+                    "Authorization": f"Bearer {CONFIG.get('llm_apikey', '')}",
+                    "Content-Type": "application/json",
+                }
                 payload = {
                     "model": CONFIG.get("llm_model", "deepseek-chat"),
-                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt_str}],
-                    "temperature": 0.85
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt_str},
+                    ],
+                    "temperature": 0.85,
                 }
-                resp = requests.post(CONFIG.get("llm_url", ""), json=payload, headers=headers, timeout=25)
+                resp = requests.post(
+                    CONFIG.get("llm_url", ""), json=payload, headers=headers, timeout=25
+                )
                 resp.raise_for_status()
-                content = resp.json()['choices'][0]['message']['content'].strip()
+                content = resp.json()["choices"][0]["message"]["content"].strip()
 
             # 模式 2：本地 API (Ollama / LM Studio)
             elif llm_backend == "Local API (Ollama / LM Studio)":
-                local_url = CONFIG.get("local_api_url", "http://127.0.0.1:11434/v1/chat/completions")
+                local_url = CONFIG.get(
+                    "local_api_url", "http://127.0.0.1:11434/v1/chat/completions"
+                )
                 local_model = CONFIG.get("local_api_model", "qwen2.5:1.5b")
                 payload = {
                     "model": local_model,
-                    "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt_str}],
-                    "temperature": 0.7
+                    "messages": [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": user_prompt_str},
+                    ],
+                    "temperature": 0.7,
                 }
                 resp = requests.post(local_url, json=payload, timeout=30)
                 resp.raise_for_status()
-                content = resp.json()['choices'][0]['message']['content'].strip()
+                content = resp.json()["choices"][0]["message"]["content"].strip()
 
             # 模式 3：直接加载 models/text_encoders 下的模型
             elif llm_backend == "Direct Local Model (Transformers)":
-                content = self.call_transformers_local(local_model_folder, system_prompt, user_prompt_str)
+                content = self.call_transformers_local(
+                    local_model_folder, system_prompt, user_prompt_str
+                )
 
             # JSON 清理解析
             content = re.sub(r"^```json\s*", "", content, flags=re.IGNORECASE)
@@ -310,11 +393,17 @@ RULES:
 
         except Exception as e:
             print(f"[UniversalPromptGen Error]: {e}")
-            fallback = custom_theme.strip() if custom_theme.strip() else "1girl, solo, anime style"
+            fallback = (
+                custom_theme.strip()
+                if custom_theme.strip()
+                else "1girl, solo, anime style"
+            )
             return (
                 tag_prefix + f"{fallback}, dynamic lighting, detailed",
-                prose_prefix + f"A captivating scene featuring {fallback} with cinematic lighting."
+                prose_prefix
+                + f"A captivating scene featuring {fallback} with cinematic lighting.",
             )
+
 
 NODE_CLASS_MAPPINGS = {
     "UniversalMultiRefPromptGenerator": UniversalMultiRefPromptGenerator
