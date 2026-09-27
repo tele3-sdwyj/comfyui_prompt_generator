@@ -1,0 +1,11 @@
+{
+  "db_name": "your_danbooru_username",
+  "db_apikey": "your_danbooru_api_key",
+
+  "llm_url": "https://api.deepseek.com/v1/chat/completions",
+  "llm_apikey": "sk-your-deepseek-api-key",
+  "llm_model": "deepseek-chat",
+
+  "local_api_url": "http://127.0.0.1:11434/v1/chat/completions",
+  "local_api_model": "qwen2.5:1.5b"
+}
